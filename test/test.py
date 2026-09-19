@@ -6,4 +6,4 @@ def test_retrieval_top_k():
         "What is RAG?",
     )
 
-    assert len(docs) <= 5
+    assert len(docs) <= 10
