@@ -11,3 +11,4 @@ pinecone
 sentence-transformers
 beautifulsoup4
 python-dotenv
+pytest
