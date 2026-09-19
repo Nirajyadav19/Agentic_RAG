@@ -7,3 +7,10 @@ def test_retrieval_top_k():
     )
 
     assert len(docs) <= 10
+
+def test_retrieval_content():
+    docs = retriever.invoke(
+        "What is RAG?",
+    )
+
+    assert any("RAG" in doc.page_content for doc in docs)
