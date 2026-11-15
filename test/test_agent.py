@@ -102,7 +102,6 @@ def assert_rag_chunks(documents):
 
     contents = [document.page_content.strip() for document in documents]
     assert all(contents), "The retriever returned an empty chunk."
-
     combined_content = "\n".join(contents).lower()
     assert any(
         term in combined_content
