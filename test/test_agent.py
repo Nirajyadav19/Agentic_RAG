@@ -7,6 +7,7 @@ import types
 from unittest.mock import Mock
 
 import pytest
+from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from src.models.models import AskRequest
@@ -79,33 +80,75 @@ def test_ask_request_rejects_empty_question():
         AskRequest(question="")
 
 
-@pytest.mark.skipif(
-    os.getenv("RUN_AGENT_INTEGRATION") != "1",
-    reason="Set RUN_AGENT_INTEGRATION=1 to call the configured external services.",
-)
-def test_live_agent_graph():
-    from src.agent_graph.graph_workflow import graph
+@pytest.fixture
+def live_services():
+    load_dotenv()
+    if os.getenv("RUN_AGENT_INTEGRATION", "").lower() not in {"1", "true"}:
+        pytest.skip(
+            "Set RUN_AGENT_INTEGRATION=1 to call the configured external services."
+        )
 
-    question = "Explain how the Agentic RAG workflow retrieves and grades evidence."
-    result = graph.invoke(
-        {
-            "question": question,
-            "current_query": question,
-            "kb_docs": [],
-            "web_results": "",
-            "kb_grade": "",
-            "web_grade": "",
-            "answer": "",
-            "source_used": "",
-            "retry_count": 0,
-        }
-    )
+    required_keys = ("PINECONE_API_KEY", "GROQ_API_KEY", "TAVILY_API_KEY")
+    missing_keys = [key for key in required_keys if not os.getenv(key)]
+    if missing_keys:
+        pytest.fail(
+            "Live integration tests require: " + ", ".join(missing_keys)
+        )
 
-    assert isinstance(result["answer"], str)
-    assert result["answer"].strip()
-    assert result["source_used"] in {
-        "private_kb",
-        "web_search",
-        "direct",
-        "insufficient_evidence",
-    }
+
+def assert_rag_chunks(documents):
+    assert isinstance(documents, list)
+    assert documents, "The retriever returned no chunks."
+
+    contents = [document.page_content.strip() for document in documents]
+    assert all(contents), "The retriever returned an empty chunk."
+
+    combined_content = "\n".join(contents).lower()
+    assert any(
+        term in combined_content
+        for term in ("agentic", "retriev", "document", "grading")
+    ), "Retrieved chunks do not appear related to Agentic RAG."
+
+
+def test_live_retriever_returns_rag_chunks(live_services):
+    from src.vectordb.load_vectordb import retriever
+
+    query = "How does the Agentic RAG workflow retrieve and grade documents?"
+    documents = retriever.invoke(query)
+
+    assert_rag_chunks(documents)
+
+
+def test_live_app_workflow_retrieves_chunks_and_returns_answer(
+    live_services, monkeypatch
+):
+    from src.agent_graph import nodes
+    from app.app import ask_agent
+
+    query = "How does the Agentic RAG workflow retrieve and grade documents?"
+    original_retriever = nodes.retriever
+    retrieved_chunks = []
+    original_reranker = nodes.reranker
+    reranked_pairs = []
+
+    class TrackingRetriever:
+        def invoke(self, current_query):
+            documents = original_retriever.invoke(current_query)
+            retrieved_chunks.extend(documents)
+            return documents
+
+    class TrackingReranker:
+        def predict(self, pairs):
+            reranked_pairs.extend(pairs)
+            return original_reranker.predict(pairs)
+
+    monkeypatch.setattr(nodes, "retriever", TrackingRetriever())
+    monkeypatch.setattr(nodes, "reranker", TrackingReranker())
+
+    response = asyncio.run(ask_agent(AskRequest(question=query)))
+
+    assert_rag_chunks(retrieved_chunks)
+    assert reranked_pairs, "The workflow did not rerank the retrieved chunks."
+    assert response["question"] == query
+    assert response["answer"].strip()
+    assert response["source_used"] == "private_kb"
