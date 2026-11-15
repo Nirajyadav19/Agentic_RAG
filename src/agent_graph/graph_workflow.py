@@ -60,5 +60,3 @@ workflow.add_edge("direct_answer", END)
 workflow.add_edge("answer_insufficient", END)
 
 graph = workflow.compile()
-
-print("Industry-style Agentic RAG graph compiled.")
